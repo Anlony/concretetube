@@ -1,0 +1,119 @@
+from abaqus import *
+from abaqusConstants import *
+from odbAccess import *
+import numpy as np
+
+
+D = 220
+t = 3.00
+H = 800
+t_concrete = 44
+
+odb_name = 'specimen1V2-3'
+odb_file = 'specimen1V2-3' + '.odb'
+save_file = 'E:/temp/testsize/'
+odb_path = save_file + odb_file 
+
+
+
+def get_element_cecentroid(verteies_coordinates_list):
+    sum_x = float(0)
+    sum_y = float(0)
+    sum_z = float(0)
+    
+    for point_i in verteies_coordinates_list:
+        sum_x += point_i[0]
+        sum_y += point_i[1]
+        sum_z += point_i[2]
+
+    centroid_x = sum_x/len(verteies_coordinates_list)
+    centroid_y = sum_y/len(verteies_coordinates_list)
+    centroid_z = sum_z/len(verteies_coordinates_list)
+
+    return (centroid_x, centroid_y, centroid_z)
+    
+
+
+def find_closest_element(instancename, coord, instance_elements, min_distance):
+    closest_element_label = []
+    min_distance = min_distance
+
+    for element in instance_elements:
+        element_verteies_label = element.connectivity
+
+        cooridinates_list = []
+        for node_i in element_verteies_label:
+            node_i_coordinate = list(myodb.rootAssembly.instances[instancename].nodes[node_i-1].coordinates)
+            cooridinates_list.append(node_i_coordinate)
+
+        element_centroid = get_element_cecentroid(cooridinates_list)
+        distance = ((element_centroid[0]-coord[0])**2 + (element_centroid[1]-coord[1])**2 + (element_centroid[2]-coord[2])**2)**0.5
+        if distance < min_distance or distance == min_distance:
+            closest_element_label.append(element.label)
+    return closest_element_label
+
+
+myodb = openOdb(odb_path)
+instance_name = 'CONCRETE-1'
+cocrete_elements = myodb.rootAssembly.instances[instance_name].elements
+object_ordinate = (0, 0, H/2)
+picked_distance = float(D/2-t-t_concrete+5)
+
+element_label_list = find_closest_element(instance_name, object_ordinate, cocrete_elements, picked_distance)
+
+
+myodb = session.openOdb(name=odb_file, path=odb_path)
+session.viewports['Viewport: 1'].setValues(displayedObject=myodb)
+odbSet = session.odbs[odb_path]
+
+
+resultList = session.xyDataListFromField(odb=odbSet, outputPosition=ELEMENT_CENTROID, variable=(('S', INTEGRATION_POINT, ((INVARIANT, 'Max. Principal'), )), ), 
+    elementLabels=(('%s' %instance_name,(element_label_list[0]),),))
+step_list = resultList[0]
+step = []
+for i in range(0, len(step_list)):
+    step.append(step_list[i][0])
+resultFileName = save_file + odb_name + '.txt'
+with open(resultFileName, 'w+') as f:
+    f.truncate(0)
+    f.write('step' + '\n')
+    f.write('step' + '\n')
+    for index in range(len(step)):
+        line = str(step[index]) + '\n'
+        f.write(line)
+
+
+for element_label in element_label_list:
+    resultList = session.xyDataListFromField(odb=odbSet, outputPosition=ELEMENT_CENTROID, variable=(('S', INTEGRATION_POINT, ((INVARIANT, 'Max. Principal'), )),
+        ('S', INTEGRATION_POINT, ((INVARIANT, 'Mid. Principal'), )), ('S', INTEGRATION_POINT, ((INVARIANT, 'Min. Principal'), )) ), elementLabels=(('%s' %instance_name,(element_label),),))
+    max_prin_list = resultList[0]
+    mid_prin_list = resultList[1]
+    min_prin_list = resultList[2]
+
+    max_prin = []
+    mid_prin = []
+    min_prin = []
+
+    for i in range(0, len(max_prin_list)):
+        max_prin.append(max_prin_list[i][1])
+        mid_prin.append(mid_prin_list[i][1])
+        min_prin.append(min_prin_list[i][1])
+
+    with open(resultFileName, 'r+') as f:
+        lines = f.readlines()
+        
+    new_content = []
+    line_1 = lines[0].strip()
+    new_line = line_1 + ',' + str(element_label) + ',' + str(element_label)+ ',' + str(element_label) + '\n'
+    new_content.append(new_line)
+    line_2 = lines[1].strip()
+    new_line = line_2 + ',' + 'Max_principal,Mid_principal,Min_principal' + '\n'
+    new_content.append(new_line)
+    
+    for index in range(len(max_prin)):
+        line = lines[index + 2].strip()
+        new_line = line + ',' + str(max_prin[index]) + ',' + str(mid_prin[index])+ ',' + str(min_prin[index]) + '\n'
+        new_content.append(new_line)
+        
+    with open(resultFileName, 'w+') as f:
+        f.writelines(new_content)
